@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isMember(g) {
+      return signedIn() && exists(/databases/$(database)/documents/groups/$(g)/members/$(request.auth.uid));
+    }
+    function isOwner(g) {
+      return signedIn() && get(/databases/$(database)/documents/groups/$(g)).data.ownerId == request.auth.uid;
+    }
+
+    // Índice privado de grupos de cada persona
+    match /users/{u}/groups/{g} {
+      allow read, write: if signedIn() && request.auth.uid == u;
+    }
+
+    match /groups/{g} {
+      // Cualquiera con sesión puede leer el grupo si conoce su código (así se une por enlace)
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isMember(g) && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if isOwner(g);
+
+      match /members/{m} {
+        allow read: if isMember(g) || (signedIn() && request.auth.uid == m);
+        // Unirse uno mismo, o que un miembro añada a alguien sin cuenta
+        allow create: if signedIn() && (request.auth.uid == m || isMember(g));
+        allow update: if isMember(g);
+        // Salir uno mismo, o que el creador quite a alguien
+        allow delete: if signedIn() && (request.auth.uid == m || isOwner(g));
+      }
+      match /expenses/{e} {
+        allow read, write: if isMember(g);
+      }
+      match /payments/{p} {
+        allow read, write: if isMember(g);
+      }
+    }
+  }
+}
